@@ -1,0 +1,124 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "GeORG verbinden",
+        "description": "Lege in GeORG unter Organisationseinstellungen → API-Zugänge einen Zugang mit dem Recht „Heizungssteuerung“ an. Verwende für jede Home-Assistant-Installation einen eigenen API-Zugang.",
+        "data": {
+          "url": "GeORG-Adresse",
+          "token": "API-Token"
+        },
+        "data_description": {
+          "url": "Adresse deiner GeORG-Instanz, z. B. https://georg.example.org",
+          "token": "Der Token wird beim Anlegen des API-Zugangs nur einmal angezeigt."
+        }
+      },
+      "reauth_confirm": {
+        "title": "GeORG-Token erneuern",
+        "description": "Der Token für {url} ist nicht mehr gültig. Erzeuge in GeORG einen neuen Token für den API-Zugang und gib ihn hier ein.",
+        "data": {
+          "token": "API-Token"
+        }
+      },
+      "reconfigure": {
+        "title": "GeORG-Verbindung ändern",
+        "data": {
+          "url": "GeORG-Adresse",
+          "token": "API-Token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "GeORG ist nicht erreichbar. Bitte die Adresse prüfen.",
+      "invalid_auth": "Der Token ist ungültig, der API-Zugang ist deaktiviert oder hat nicht das Recht „Heizungssteuerung“.",
+      "module_missing": "Das Modul „Heizungssteuerung“ ist in GeORG nicht gebucht.",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "reauth_successful": "Der Token wurde erneuert.",
+      "reconfigure_successful": "Die Verbindung wurde geändert.",
+      "single_instance_allowed": "Es kann nur eine GeORG-Instanz verbunden werden."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "GeORG-Heizungssteuerung",
+        "description": "Ordne den GeORG-Räumen Heizgeräte und Sensoren zu. Nur zugeordnete Räume werden an GeORG gemeldet. Änderungen werden erst mit „Speichern“ übernommen.",
+        "menu_options": {
+          "select_room": "Raum zuordnen",
+          "settings": "Einstellungen",
+          "save": "Speichern und schließen"
+        }
+      },
+      "select_room": {
+        "title": "Raum wählen",
+        "description": "✓ = bereits zugeordnet, ⚠ = in GeORG nicht mehr bekannt (Zuordnung entfernen, indem alle Felder geleert werden).",
+        "data": {
+          "room": "Raum"
+        }
+      },
+      "room": {
+        "title": "{room}",
+        "description": "Alle Felder leeren, um den Raum aus der Zuordnung zu entfernen.",
+        "data": {
+          "heaters": "Heizgeräte",
+          "temperature_sensor": "Temperatursensor",
+          "humidity_sensor": "Feuchtesensor"
+        },
+        "data_description": {
+          "heaters": "Thermostate (climate) und schaltbare Heizungen (switch) des Raums.",
+          "temperature_sensor": "Optional. Ohne Sensor wird die Ist-Temperatur des ersten Thermostats verwendet.",
+          "humidity_sensor": "Optional."
+        }
+      },
+      "settings": {
+        "title": "Einstellungen",
+        "data": {
+          "scan_interval": "Meldeintervall",
+          "failsafe_grace": "Karenz der Ausfall-Absicherung"
+        },
+        "data_description": {
+          "scan_interval": "Wie oft Home Assistant an GeORG meldet. Davon hängt die Schaltgenauigkeit ab.",
+          "failsafe_grace": "Ist GeORG nicht erreichbar, wird ein heizender Raum so lange nach dem Ende seines Heizfensters lokal abgesenkt bzw. ausgeschaltet."
+        }
+      }
+    },
+    "abort": {
+      "cannot_connect": "GeORG ist nicht erreichbar, die Räume konnten nicht geladen werden.",
+      "invalid_auth": "Der Token ist nicht mehr gültig.",
+      "module_missing": "Das Modul „Heizungssteuerung“ ist in GeORG nicht gebucht.",
+      "no_rooms": "In GeORG gibt es keine Räume mit aktiver Heizungssteuerung."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "heating": { "name": "Heizen" },
+      "connection": { "name": "Verbindung" }
+    },
+    "sensor": {
+      "target_temperature": { "name": "Solltemperatur" },
+      "window_start": { "name": "Heizfenster Beginn" },
+      "window_end": { "name": "Heizfenster Ende" },
+      "window_name": { "name": "Heizfenster Termin" },
+      "last_success": { "name": "Letzter erfolgreicher Abruf" }
+    },
+    "switch": {
+      "automation": { "name": "Automatik" }
+    }
+  },
+  "issues": {
+    "connection_lost": {
+      "title": "GeORG länger nicht erreichbar",
+      "description": "Home Assistant erreicht GeORG ({url}) seit mehr als 12 Stunden nicht. Die Heizungen werden nicht nach den Raumbelegungen geschaltet. Räume, deren Heizfenster abgelaufen ist, werden lokal abgesenkt bzw. ausgeschaltet."
+    },
+    "module_missing": {
+      "title": "GeORG-Modul „Heizungssteuerung“ nicht gebucht",
+      "description": "GeORG ({url}) meldet, dass das Modul „Heizungssteuerung“ für eure Organisation nicht gebucht ist. Bucht das Modul oder entfernt die Integration."
+    },
+    "unknown_room": {
+      "title": "Raum {room} neu zuordnen",
+      "description": "GeORG kennt den Raum „{room}“ (Kennung `{room_id}`) nicht mehr oder seine Heizungssteuerung wurde deaktiviert – z. B. weil das Kürzel (Slug) geändert wurde. Der Raum wird nicht mehr gemeldet. Öffne die Optionen der Integration und ordne die Heizgeräte dem richtigen Raum zu."
+    }
+  }
+}

@@ -1,0 +1,163 @@
+# GeORG heating API (tag "Heating"), written from KONZEPT.md §9.
+# Replace with the Scramble export from GeORG (`php artisan scramble:export`)
+# once available; the contract must stay identical.
+openapi: 3.1.0
+info:
+  title: GeORG Heating API
+  version: "1.0"
+servers:
+  - url: https://{instance}/api/v1
+    variables:
+      instance:
+        default: georg.example.org
+security:
+  - bearerAuth: []
+tags:
+  - name: Heating
+paths:
+  /heating/rooms:
+    get:
+      tags: [Heating]
+      operationId: heatingRooms
+      summary: List rooms with active heating control
+      responses:
+        "200":
+          description: Rooms sorted as in GeORG (category, order, name)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Room" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ModuleMissing" }
+  /heating/sync:
+    post:
+      tags: [Heating]
+      operationId: heatingSync
+      summary: Report measurements and fetch switching requests
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SyncRequest" }
+      responses:
+        "200":
+          description: One entry per reported room, in request order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/SyncResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ModuleMissing" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Token of an API access with permission `heating:control`.
+  schemas:
+    Room:
+      type: object
+      required: [id, name, comfort_temperature, eco_temperature]
+      properties:
+        id:
+          type: string
+          description: Stable room identifier (slug in GeORG).
+          example: gemeindesaal
+        name: { type: string, example: Gemeindesaal }
+        comfort_temperature: { type: [number, "null"], example: 21.5 }
+        eco_temperature: { type: [number, "null"], example: 16 }
+    SyncRequest:
+      type: object
+      required: [rooms]
+      properties:
+        force:
+          type: boolean
+          default: false
+          description: Send the current request of all reported rooms again.
+        rooms:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: { type: string }
+              current_temperature:
+                type: [number, "null"]
+                minimum: -50
+                maximum: 100
+                description: Omitted = keep old value, null = clear value.
+              humidity:
+                type: [number, "null"]
+                minimum: 0
+                maximum: 100
+                description: Omitted = keep old value, null = clear value.
+    SyncResult:
+      type: object
+      required: [id, command, window]
+      properties:
+        id: { type: string }
+        command:
+          description: New switching request; null = unchanged, do nothing.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [state, target_temperature]
+              properties:
+                state: { type: string, enum: ["on", "off"] }
+                target_temperature: { type: [number, "null"] }
+        window:
+          description: Informative running or next heating window.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [name, starts_at, ends_at]
+              properties:
+                name: { type: string }
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+  responses:
+    Unauthenticated:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Missing permission, API access disabled or user token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ModuleMissing:
+      description: Module "Heizungssteuerung" not booked
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationError:
+      description: Validation failed, nothing was processed (e.g. `rooms.0.id` unknown)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

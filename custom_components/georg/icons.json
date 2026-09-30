@@ -1,0 +1,16 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "heating": { "default": "mdi:radiator-off", "state": { "on": "mdi:radiator" } }
+    },
+    "sensor": {
+      "window_start": { "default": "mdi:calendar-start" },
+      "window_end": { "default": "mdi:calendar-end" },
+      "window_name": { "default": "mdi:calendar-text" },
+      "last_success": { "default": "mdi:cloud-check" }
+    },
+    "switch": {
+      "automation": { "default": "mdi:home-thermometer" }
+    }
+  }
+}

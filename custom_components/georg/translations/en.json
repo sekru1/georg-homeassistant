@@ -1,0 +1,124 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect GeORG",
+        "description": "Create an API access with the permission \"Heizungssteuerung\" in GeORG under Organisationseinstellungen → API-Zugänge. Use a separate API access for every Home Assistant installation.",
+        "data": {
+          "url": "GeORG URL",
+          "token": "API token"
+        },
+        "data_description": {
+          "url": "Address of your GeORG instance, e.g. https://georg.example.org",
+          "token": "The token is shown only once when the API access is created."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Renew GeORG token",
+        "description": "The token for {url} is no longer valid. Create a new token for the API access in GeORG and enter it here.",
+        "data": {
+          "token": "API token"
+        }
+      },
+      "reconfigure": {
+        "title": "Change GeORG connection",
+        "data": {
+          "url": "GeORG URL",
+          "token": "API token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "GeORG cannot be reached. Check the address.",
+      "invalid_auth": "The token is invalid, the API access is disabled or lacks the permission \"Heizungssteuerung\".",
+      "module_missing": "The module \"Heizungssteuerung\" is not booked in GeORG.",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "reauth_successful": "The token was renewed.",
+      "reconfigure_successful": "The connection was changed.",
+      "single_instance_allowed": "Only one GeORG instance can be connected."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "GeORG heating control",
+        "description": "Assign heaters and sensors to GeORG rooms. Only assigned rooms are reported to GeORG. Changes take effect after saving.",
+        "menu_options": {
+          "select_room": "Assign room",
+          "settings": "Settings",
+          "save": "Save and close"
+        }
+      },
+      "select_room": {
+        "title": "Choose room",
+        "description": "✓ = already assigned, ⚠ = no longer known in GeORG (remove the assignment by clearing all fields).",
+        "data": {
+          "room": "Room"
+        }
+      },
+      "room": {
+        "title": "{room}",
+        "description": "Clear all fields to remove the room from the assignment.",
+        "data": {
+          "heaters": "Heaters",
+          "temperature_sensor": "Temperature sensor",
+          "humidity_sensor": "Humidity sensor"
+        },
+        "data_description": {
+          "heaters": "Thermostats (climate) and switchable heaters (switch) of the room.",
+          "temperature_sensor": "Optional. Without a sensor the current temperature of the first thermostat is used.",
+          "humidity_sensor": "Optional."
+        }
+      },
+      "settings": {
+        "title": "Settings",
+        "data": {
+          "scan_interval": "Report interval",
+          "failsafe_grace": "Failsafe grace period"
+        },
+        "data_description": {
+          "scan_interval": "How often Home Assistant reports to GeORG. The switching accuracy depends on this interval.",
+          "failsafe_grace": "If GeORG cannot be reached, a heating room is switched off locally this long after the end of its heating window."
+        }
+      }
+    },
+    "abort": {
+      "cannot_connect": "GeORG cannot be reached, the rooms could not be loaded.",
+      "invalid_auth": "The token is no longer valid.",
+      "module_missing": "The module \"Heizungssteuerung\" is not booked in GeORG.",
+      "no_rooms": "There are no rooms with active heating control in GeORG."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "heating": { "name": "Heating" },
+      "connection": { "name": "Connection" }
+    },
+    "sensor": {
+      "target_temperature": { "name": "Target temperature" },
+      "window_start": { "name": "Heating window start" },
+      "window_end": { "name": "Heating window end" },
+      "window_name": { "name": "Heating window event" },
+      "last_success": { "name": "Last successful report" }
+    },
+    "switch": {
+      "automation": { "name": "Automation" }
+    }
+  },
+  "issues": {
+    "connection_lost": {
+      "title": "GeORG unreachable for a long time",
+      "description": "Home Assistant has not been able to reach GeORG ({url}) for more than 12 hours. Heaters are not switched according to room bookings. Rooms whose heating window has ended are switched off locally."
+    },
+    "module_missing": {
+      "title": "GeORG module \"Heizungssteuerung\" not booked",
+      "description": "GeORG ({url}) answers that the module \"Heizungssteuerung\" is not booked for your organisation. Book the module or remove the integration."
+    },
+    "unknown_room": {
+      "title": "Reassign room {room}",
+      "description": "GeORG no longer knows the room \"{room}\" (ID `{room_id}`) or its heating control was disabled – for example because its short name (slug) was changed. The room is no longer reported. Open the integration options and assign the heaters to the correct room."
+    }
+  }
+}
