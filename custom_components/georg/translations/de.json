@@ -30,6 +30,7 @@
     },
     "error": {
       "cannot_connect": "GeORG ist nicht erreichbar. Bitte die Adresse prüfen.",
+      "https_required": "GeORG muss über https:// erreichbar sein, damit der Token verschlüsselt übertragen wird.",
       "invalid_auth": "Der Token ist ungültig, der API-Zugang ist deaktiviert oder hat nicht das Recht „Heizungssteuerung“.",
       "module_missing": "Das Modul „Heizungssteuerung“ ist in GeORG nicht gebucht.",
       "unknown": "Unerwarteter Fehler"

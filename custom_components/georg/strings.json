@@ -30,6 +30,7 @@
     },
     "error": {
       "cannot_connect": "GeORG cannot be reached. Check the address.",
+      "https_required": "GeORG must be reached via https:// so the token is transmitted encrypted.",
       "invalid_auth": "The token is invalid, the API access is disabled or lacks the permission \"Heizungssteuerung\".",
       "module_missing": "The module \"Heizungssteuerung\" is not booked in GeORG.",
       "unknown": "Unexpected error"

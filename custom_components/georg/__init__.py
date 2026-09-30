@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import GeorgClient
-from .coordinator import GeorgConfigEntry, GeorgCoordinator
+from .coordinator import GeorgConfigEntry, GeorgCoordinator, create_store
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
@@ -37,7 +37,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: GeorgConfigEntry) -> bo
 
 async def async_remove_entry(hass: HomeAssistant, entry: GeorgConfigEntry) -> None:
     """Remove persisted state when the integration is deleted."""
-    client = GeorgClient(
-        async_get_clientsession(hass), entry.data[CONF_URL], entry.data[CONF_TOKEN]
-    )
-    await GeorgCoordinator(hass, entry, client).async_remove_store()
+    await create_store(hass, entry.entry_id).async_remove()

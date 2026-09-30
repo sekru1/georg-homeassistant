@@ -24,6 +24,7 @@ from .api import (
     GeorgError,
     GeorgModuleMissingError,
     Room,
+    is_secure_url,
     normalize_url,
 )
 from .const import (
@@ -153,6 +154,8 @@ class GeorgConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _async_validate(self, url: str, token: str) -> dict[str, str]:
         """Check the token with ``GET /heating/rooms``."""
+        if not is_secure_url(url):
+            return {CONF_URL: "https_required"}
         client = GeorgClient(async_get_clientsession(self.hass), url, token)
         try:
             await client.async_get_rooms()

@@ -105,6 +105,14 @@ async def test_errors(
         await _client(hass).async_get_rooms()
 
 
+async def test_not_found_without_georg_answer(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    aioclient_mock.get(ROOMS_URL, status=404, text="<html>Not Found</html>")
+    with pytest.raises(GeorgConnectionError):
+        await _client(hass).async_get_rooms()
+
+
 async def test_timeout(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:

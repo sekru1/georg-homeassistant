@@ -269,8 +269,9 @@ async def test_module_missing(
     config_entry: MockConfigEntry,
     issue_registry: ir.IssueRegistry,
 ) -> None:
-    mock_rooms(aioclient_mock, status=404)
-    aioclient_mock.post(SYNC_URL, status=404)
+    missing = {"message": "Modul „Heizungssteuerung“ nicht gebucht."}
+    mock_rooms(aioclient_mock, status=404, json=missing)
+    aioclient_mock.post(SYNC_URL, status=404, json=missing)
     await _setup(hass, config_entry)
     assert issue_registry.async_get_issue(DOMAIN, "module_missing") is not None
     assert hass.states.get("binary_sensor.georg_verbindung_connection").state == "off"

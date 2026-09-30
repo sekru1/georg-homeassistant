@@ -238,7 +238,11 @@ class GeorgClient:
         if status in (401, 403):
             raise GeorgAuthError(message or f"HTTP {status}")
         if status == 404:
-            raise GeorgModuleMissingError(message or "HTTP 404")
+            # GeORG answers with a JSON message; anything else is most likely
+            # a wrong address (another web server or a mistyped path).
+            if message:
+                raise GeorgModuleMissingError(message)
+            raise GeorgConnectionError("HTTP 404 without GeORG answer, check the URL")
         if status == 422:
             errors = body.get("errors") if isinstance(body, dict) else None
             raise GeorgValidationError(message or "HTTP 422", errors or {})
@@ -255,6 +259,11 @@ def normalize_url(url: str) -> str:
     if url.endswith(API_PATH):
         url = url[: -len(API_PATH)]
     return url
+
+
+def is_secure_url(url: str) -> bool:
+    """Return whether the token would be sent encrypted."""
+    return url.lower().startswith("https://")
 
 
 def _unknown_rooms(errors: dict[str, list[str]], rooms: list[RoomReport]) -> list[str]:

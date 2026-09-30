@@ -5,7 +5,7 @@ description = "Home Assistant integration: heating control by GeORG room booking
 requires-python = ">=3.13"
 
 [dependency-groups]
-test = ["pytest-homeassistant-custom-component"]
+test = ["pytest-homeassistant-custom-component==0.13.367"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -17,7 +17,7 @@ Das vollständige Konzept steht in [KONZEPT.md](KONZEPT.md), die API in [api/ope
 
 1. In GeORG unter **Organisationseinstellungen → API-Zugänge** einen Zugang anlegen (z. B. „Home Assistant“) mit dem Recht **Heizungssteuerung**. Den Token kopieren – er wird nur einmal angezeigt.
    **Pro Home-Assistant-Installation ein eigener API-Zugang**, sonst nehmen sich die Installationen die Schaltanforderungen gegenseitig weg.
-2. In Home Assistant: Einstellungen → Geräte & Dienste → Integration hinzufügen → **GeORG Heizungssteuerung**. GeORG-Adresse (z. B. `https://georg.example.org`) und Token eingeben.
+2. In Home Assistant: Einstellungen → Geräte & Dienste → Integration hinzufügen → **GeORG Heizungssteuerung**. GeORG-Adresse (z. B. `https://georg.example.org`) und Token eingeben. Die Adresse muss mit `https://` beginnen, damit der Token nie unverschlüsselt übertragen wird.
 3. In den **Optionen** der Integration unter „Raum zuordnen“ jedem GeORG-Raum Heizgeräte (`climate`, `switch`) und optional einen Temperatur- und Feuchtesensor zuordnen. Mit „Speichern und schließen“ übernehmen.
    Ohne Temperatursensor wird `current_temperature` des ersten Thermostats gemeldet.
 4. Unter „Einstellungen“ lassen sich Meldeintervall (Standard 120 s) und Karenz der Ausfall-Absicherung (Standard 30 min) anpassen.
@@ -56,9 +56,12 @@ Dazu das Gerät „GeORG-Verbindung“ mit Verbindungsstatus und Zeitpunkt des l
 | GeORG nicht erreichbar | Geräte bleiben im letzten Zustand. Ist ein Raum am Heizen und das Heizfenster plus Karenz abgelaufen, wird er lokal abgesenkt bzw. ausgeschaltet (Thermostate ohne bekannte Absenktemperatur werden ausgeschaltet). Nach Wiederverbindung wird mit `force: true` gemeldet. |
 | Länger als 12 h nicht erreichbar | Reparaturhinweis. |
 | Token ungültig / API-Zugang deaktiviert (401/403) | Home Assistant fragt nach einem neuen Token. |
-| Modul „Heizungssteuerung“ nicht gebucht (404) | Reparaturhinweis. |
+| Modul „Heizungssteuerung“ nicht gebucht (404 mit Antwort von GeORG) | Reparaturhinweis. |
+| Falsche Adresse (404 ohne Antwort von GeORG) | Bei der Einrichtung „nicht erreichbar“, im Betrieb wie ein Verbindungsausfall. |
 | Raum in GeORG unbekannt (422) | Raum wird nicht mehr gemeldet, Reparaturhinweis „Raum neu zuordnen“; die übrigen Räume laufen weiter. |
 | Neustart / geänderte Zuordnung | Erste Meldung mit `force: true`. |
+
+Für Fehlermeldungen: Unter Einstellungen → Geräte & Dienste → GeORG → ⋮ → **Diagnose herunterladen** und die Datei an das Issue hängen (der Token wird darin unkenntlich gemacht).
 
 ## Entwicklung
 
@@ -66,7 +69,7 @@ Dazu das Gerät „GeORG-Verbindung“ mit Verbindungsstatus und Zeitpunkt des l
 uv venv --python 3.14 .venv
 uv pip install --python .venv/bin/python -r requirements_test.txt
 .venv/bin/python -m pytest
-uvx ruff check . && uvx ruff format --check .
+uvx ruff@0.16.9 check . && uvx ruff@0.16.9 format --check .
 ```
 
 Aufbau:
@@ -78,6 +81,7 @@ Aufbau:
 | `controller.py` | Ansteuerung von `climate` und `switch` |
 | `config_flow.py` | Einrichtung, Reauth, Rekonfiguration, Raumzuordnung (Optionen) |
 | `sensor.py`, `binary_sensor.py`, `switch.py` | Entitäten |
+| `diagnostics.py` | Diagnose-Download (Token wird entfernt) |
 | `brand/icon.png`, `brand/icon@2x.png` | Icon in Home Assistant (256 bzw. 512 px), erzeugt aus [assets/icon.svg](assets/icon.svg) |
 
 Icons nach Änderung am SVG neu erzeugen:

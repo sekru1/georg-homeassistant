@@ -151,9 +151,12 @@ class GeorgCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         # The first report after start or a changed mapping is always forced.
         self._force = True
         self._rooms_loaded = False
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}"
-        )
+        self._store = create_store(hass, entry.entry_id)
+
+    @property
+    def excluded_rooms(self) -> list[str]:
+        """Rooms no longer reported because GeORG rejected them."""
+        return sorted(self._excluded)
 
     async def async_load(self) -> None:
         """Restore the persisted state and clear stale room issues."""
@@ -175,9 +178,6 @@ class GeorgCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         for domain, issue_id in list(registry.issues):
             if domain == DOMAIN and issue_id.startswith(f"{ISSUE_UNKNOWN_ROOM}_"):
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
-
-    async def async_remove_store(self) -> None:
-        await self._store.async_remove()
 
     async def _async_save(self) -> None:
         await self._store.async_save(
@@ -429,6 +429,11 @@ class GeorgCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             current_temperature=_in_range(temperature, _TEMPERATURE_RANGE),
             humidity=_in_range(humidity, _HUMIDITY_RANGE),
         )
+
+
+def create_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """Return the store holding the persisted state of a config entry."""
+    return Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}")
 
 
 def _state_float(value: Any) -> float | None:

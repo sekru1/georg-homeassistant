@@ -46,7 +46,8 @@ async def test_user_flow(
     [
         ({"status": 401}, "invalid_auth"),
         ({"status": 403}, "invalid_auth"),
-        ({"status": 404}, "module_missing"),
+        ({"status": 404, "json": {"message": "Modul nicht gebucht"}}, "module_missing"),
+        ({"status": 404, "text": "<html>Not Found</html>"}, "cannot_connect"),
         ({"exc": TimeoutError}, "cannot_connect"),
     ],
 )
@@ -65,6 +66,20 @@ async def test_user_flow_errors(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
+
+
+async def test_user_flow_requires_https(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_URL: "http://georg.example.org", CONF_TOKEN: TOKEN}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_URL: "https_required"}
+    assert aioclient_mock.call_count == 0
 
 
 async def test_reauth(
