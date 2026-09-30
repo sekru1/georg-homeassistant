@@ -2,74 +2,121 @@
 
 **Ziel:** Heizungen, die in **Home Assistant (HA)** eingebunden sind, automatisch anhand der Raumbelegungen in **GeORG** steuern.
 
-**Entscheidung:** Wir bauen eine eigene **HA-Integration** (Custom Integration). Sie fragt die GeORG-API regelmäßig ab (**Pull**), stellt die Heizungen danach ein und meldet den Zustand an GeORG zurück.
+**Entscheidung:** Wir bauen eine eigene **HA-Integration** (Custom Integration) in einem eigenen Repo. Sie meldet in einem festen Intervall die Messwerte der Räume an GeORG (**Pull**) und bekommt dabei **Schaltanforderungen** zurück, die sie an den zugeordneten Heizgeräten umsetzt.
+
+> Stand: 2026-09-30. Die GeORG-Seite (API, Einstellungen, Übersicht) ist umgesetzt. Dieses Dokument beschreibt den verbindlichen Vertrag für die Integration.
 
 ---
 
 ## 1. Grundprinzip
 
-- In GeORG werden **Termine, Raumbelegungen und die Einstellungen zur Heizungssteuerung** verwaltet.
-- **GeORG berechnet die Heizfenster.** Die API liefert pro Raum fertige Zeiträume mit Solltemperatur. Home Assistant setzt sie nur um und hat keine eigene Heizlogik.
-- Die API gibt **nur Belegungen aus, für die auch geheizt werden soll.** Welche Belegungen das sind, entscheidet GeORG.
-- Die Verbindung wird **immer von HA nach außen** aufgebaut, auch für die Rückmeldung. Es braucht keine Portfreigabe, kein VPN und keinen HA-Token in GeORG.
-- **Eine HA-Installation ist mit genau einer GeORG-Instanz** verbunden.
-- Fällt GeORG aus oder ist das Internet weg, arbeitet HA mit den zuletzt abgerufenen Heizfenstern weiter. Wichtig: Der Cache enthält zwingend einen Absenk-Schaltpunkt. Heizungen müssen also immer wieder ausgehen können.
+- **GeORG entscheidet, HA setzt um.** GeORG pflegt Termine, Raumbelegungen und Heizeinstellungen und entscheidet zu jedem Zeitpunkt, ob ein Raum heizen soll. HA hat keine eigene Heizlogik.
+- **Eine Anfrage für alles:** HA meldet je Raum Ist-Temperatur und Luftfeuchte und erhält in derselben Antwort die Schaltanforderung.
+- **Jede Schaltanforderung kommt genau einmal.** GeORG merkt sich je API-Zugang, welche Anforderung zuletzt gesendet wurde. Solange sich nichts ändert, kommt `command: null`. Manuelle Änderungen vor Ort (am Thermostat, in HA) bleiben dadurch bis zur nächsten echten Änderung bestehen.
+- **Die Verbindung geht immer von HA nach außen.** Es braucht keine Portfreigabe, kein VPN und keinen HA-Token in GeORG.
+- **Eine HA-Installation ist mit genau einer GeORG-Instanz** verbunden und nutzt dafür **einen eigenen API-Zugang**.
+- Die Schaltgenauigkeit ergibt sich aus dem **Meldeintervall**: GeORG entscheidet im Moment der Meldung.
 
 ---
 
 ## 2. Heizeinstellungen in GeORG
 
-GeORG pflegt je Raum:
+### Je Raum („Raum bearbeiten → Heizungssteuerung")
 
 | Einstellung | Bedeutung |
 | --- | --- |
-| Komforttemperatur | Solltemperatur während eines Heizfensters |
-| Absenktemperatur | Solltemperatur außerhalb der Heizfenster |
-| Vorlaufzeit | so lange vor Beginn der Belegung wird geheizt, bei Fußbodenheizung entsprechend länger |
-| Nachlaufzeit | so lange nach dem Ende der Belegung bleibt die Komforttemperatur bestehen, bzw. so früh wird schon abgesenkt |
-| Heizperiode | Zeitraum im Jahr, in dem überhaupt gesteuert wird |
+| Heizung für diesen Raum aktiv | Nur aktive Räume erscheinen an der API. |
+| Vorlaufzeit (min) | So lange vor Beginn einer Belegung wird geheizt. Bei Fußbodenheizung entsprechend länger. |
+| Vorlaufzeit dynamisch bei … °C | Optional: Vorlaufzeit skaliert mit der gemeldeten Ist-Temperatur (siehe 3.2). |
+| Nachlaufzeit (± min) | So lange nach dem Ende bleibt geheizt; negativ = schon vor dem Ende absenken. |
+| Komforttemperatur | Solltemperatur während des Heizens. |
+| Auto-Regelung + Hysterese (K) | Optional: Zweipunktregelung durch GeORG anhand der Ist-Temperatur (siehe 3.3). |
+| Absenktemperatur | Solltemperatur außerhalb des Heizens. |
 
-Aus diesen Einstellungen und den Belegungen berechnet GeORG die **Heizfenster**. Überschneiden sich Belegungen oder folgen sie dicht aufeinander, werden sie in GeORG zu einem Fenster zusammengefasst.
+### Global („Raumplan" bzw. „Ressourcen" → „Heizungseinstellungen")
+
+| Einstellung | Bedeutung |
+| --- | --- |
+| Heizungssteuerung | `Aktiv` (immer), `Automatik` (nur in der Heizperiode), `Inaktiv` (nie). |
+| Beginn / Ende der Heizperiode | Kalenderwochen, nur bei `Automatik` relevant; darf über den Jahreswechsel gehen (z. B. KW 40 bis KW 18). |
+
+Änderungen werden sofort gespeichert. Der Dialog zeigt außerdem je Raum Einstellungen, zuletzt gemeldete Temperatur/Feuchte, Zeitpunkt der letzten Meldung, Schaltzustand und das nächste Heizereignis.
+
+### Je Termin
+
+| Feld | Bedeutung |
+| --- | --- |
+| Heizung an/aus | Nur Termine mit „an" (Standard) lösen Heizen aus. |
+| Heizung reduzieren | Vorlaufzeit auf ein Viertel verkürzt. |
 
 ---
 
-## 3. Datenfluss
+## 3. Entscheidungslogik in GeORG
+
+Bei jeder Meldung berechnet GeORG je Raum:
+
+### 3.1 Soll geheizt werden?
+
+Ein Raum soll heizen, wenn **alle** Bedingungen erfüllt sind:
+
+1. Heizungssteuerung des Raums ist aktiv.
+2. Global: Modus `Aktiv`, oder Modus `Automatik` und das heutige Datum liegt in der Heizperiode.
+3. Es gibt einen Termin mit „Heizung an" in diesem Raum, für den gilt:
+   `Beginn − Vorlaufzeit ≤ jetzt < Ende + Nachlaufzeit`
+   (Vorlaufzeit bei „Heizung reduzieren": ein Viertel).
+4. Bei aktiver Auto-Regelung zusätzlich die Hysterese-Bedingung (3.3).
+
+Überlappende Termine werden **nicht** zu einem Fenster zusammengefasst; es genügt, dass irgendein Termin die Bedingung erfüllt.
+
+### 3.2 Dynamische Vorlaufzeit
+
+Nur wenn aktiviert und der Raum aktuell **nicht** heizt (letzte Anforderung `off`):
 
 ```text
-GeORG-Instanz                            Home Assistant (beim Verein)
-┌──────────────────────┐                 ┌───────────────────────────────┐
-│ Heizeinstellungen    │   GET (Pull)    │ Coordinator (Polling)         │
-│ Raumbelegungen       │ ◄────────────── │   ↓ Cache (persistent)        │
-│   ↓                  │                 │ Scheduler: Schaltpunkte       │
-│ Heizfenster-API      │                 │   ↓                           │
-│                      │   POST Status   │ climate / switch ansteuern    │
-│ Status-Empfang       │ ◄────────────── │ Ist-Temp. + gesetzter Soll    │
-└──────────────────────┘   (OAuth2)      └───────────────────────────────┘
+faktor      = (Komfort − Ist) / (Komfort − Basistemperatur)
+vorlaufzeit = round(faktor × eingestellte Vorlaufzeit)     // 0, wenn Ist ≥ Komfort
 ```
 
-1. Der **Coordinator** (`DataUpdateCoordinator`) ruft die Räume und die Heizfenster der nächsten Tage ab, zum Beispiel alle 5 Minuten.
-2. Die Heizfenster werden **persistent gecacht** (`homeassistant.helpers.storage.Store`) und überstehen so auch einen Neustart von HA ohne Internet.
-3. Der **Scheduler** legt für jeden Beginn und jedes Ende eines Heizfensters einen Schaltpunkt an (`async_track_point_in_time`). Ändern sich die Fenster, werden die Schaltpunkte neu berechnet.
-4. An jedem Schaltpunkt werden die zugeordneten Heizgeräte gesetzt (siehe Abschnitt 4).
-5. Die **Rückmeldung** schickt die Ist-Temperaturen und den zuletzt gesetzten Sollwert je Raum per `POST` an GeORG. Das passiert nach jedem Schaltpunkt und zusätzlich in einem festen Intervall.
+Ein kalter Raum beginnt also früher, ein warmer später. Voraussetzung ist, dass HA die Ist-Temperatur meldet.
+
+### 3.3 Auto-Regelung (Zweipunktregler)
+
+Nur innerhalb eines Heizzeitraums:
+
+| Ist-Temperatur | Ergebnis |
+| --- | --- |
+| unbekannt (nie gemeldet oder `null`) | an |
+| ≥ Komfort + Hysterese/2 | aus |
+| ≤ Komfort − Hysterese/2 | an |
+| dazwischen | letzter gesendeter Zustand bleibt |
+
+Gedacht für schaltbare Geräte (Steckdose, Elektroheizung) ohne eigenen Thermostat. **Achtung:** Schaltet die Regelung auf „aus", ist die Anforderung `off` mit Absenktemperatur – ein Thermostat in einem solchen Raum würde also abgesenkt. Räume mit Thermostaten daher ohne Auto-Regelung betreiben.
+
+### 3.4 Die Schaltanforderung
+
+| Ergebnis | `state` | `target_temperature` |
+| --- | --- | --- |
+| heizen | `on` | Komforttemperatur |
+| nicht heizen | `off` | Absenktemperatur |
+
+Die Anforderung wird gesendet, wenn sich `state` **oder** `target_temperature` gegenüber der zuletzt an diesen API-Zugang gesendeten Anforderung ändert – also auch, wenn in GeORG die Komfort- oder Absenktemperatur geändert wird. Beim allerersten Kontakt je Raum wird immer gesendet.
+
+Außerhalb der Heizperiode bzw. bei Modus `Inaktiv` ist das Ergebnis dauerhaft `off` + Absenktemperatur; das wird einmal gesendet, danach kommt nichts mehr.
 
 ---
 
-## 4. Ansteuerung der Heizgeräte
+## 4. Ansteuerung der Heizgeräte (HA)
 
-Ein GeORG-Raum kann **mehrere Geräte** haben. Unterstützt werden:
+Ein GeORG-Raum kann **mehrere Geräte** haben. Beim Eintreffen einer Anforderung (`command` ≠ `null`):
 
-| Gerätetyp | HA-Entität | im Heizfenster | außerhalb |
+| Gerätetyp | HA-Entität | `state: on` | `state: off` |
 | --- | --- | --- | --- |
-| Heizkörperthermostat | `climate` | `set_temperature` Komfort | `set_temperature` Absenk |
-| Fußbodenheizung | `climate` | wie Thermostat, längere Vorlaufzeit in GeORG | wie Thermostat |
+| Heizkörperthermostat, Fußbodenheizung | `climate` | Heizmodus sicherstellen (falls `hvac_mode: off`), `set_temperature` = `target_temperature` | `set_temperature` = `target_temperature` |
 | Elektroheizung, Steckdose | `switch` | `turn_on` | `turn_off` |
 
-Ist ein `climate`-Gerät aus (`hvac_mode: off`), wird es am Beginn eines Heizfensters in den Heizmodus geschaltet.
-
-**Manuelle Änderungen vor Ort** bleiben bis zum nächsten Schaltpunkt bestehen. Die Integration schreibt nur an Schaltpunkten und korrigiert zwischendurch nichts. Wird eine Abweichung vom Sollwert erkannt, meldet die Integration sie über die Rückmeldung an GeORG („manuell übersteuert“).
-
-**Außerhalb der Heizperiode** liefert GeORG keine Heizfenster, und die Integration schaltet nichts.
+- **Nur bei `command` ≠ `null` schalten.** Zwischendurch nichts korrigieren – so bleiben manuelle Änderungen erhalten.
+- `target_temperature` kann `null` sein, wenn in GeORG keine Temperatur gepflegt ist → `climate` dann nicht verändern, `switch` trotzdem schalten.
+- Ist ein Gerät nicht verfügbar, wird es übersprungen und protokolliert. Da GeORG die Anforderung als gesendet betrachtet, sollte die Integration die zuletzt empfangene Anforderung je Raum lokal speichern und beim Wiederverfügbarwerden des Geräts nachholen.
 
 ---
 
@@ -77,103 +124,236 @@ Ist ein `climate`-Gerät aus (`hvac_mode: off`), wird es am Beginn eines Heizfen
 
 | Situation | Verhalten |
 | --- | --- |
-| GeORG nicht erreichbar | Die Integration arbeitet mit den gecachten Heizfenstern weiter. Nach dem letzten bekannten Fenster bleibt der Raum auf Absenktemperatur. |
-| Längerer Ausfall (Schwelle konfigurierbar, z. B. 12 h) | Die Integration legt einen **HA-Reparaturhinweis** an (`issue_registry`). |
-| OAuth-Token ungültig bzw. Anmeldung abgelaufen | Es startet ein **Reauth-Flow**, der in HA als Reparaturhinweis bzw. Benachrichtigung erscheint. |
-| Heizgerät nicht verfügbar | Das Gerät wird übersprungen, die Integration protokolliert es und meldet es an GeORG. |
+| GeORG nicht erreichbar | Keine neuen Anforderungen; Geräte bleiben im letzten Zustand. **Empfohlene Absicherung:** Ist ein Raum `on` und `window.ends_at` (siehe API) plus Karenz (z. B. 30 min) überschritten, ohne dass GeORG erreichbar war, lokal auf Absenken bzw. `turn_off` schalten. So kann keine Heizung dauerhaft anbleiben. |
+| Längerer Ausfall (12 h) | HA-Reparaturhinweis (`issue_registry`). |
+| 401 / 403 (Token ungültig, gelöscht oder API-Zugang deaktiviert) | Reauth-Flow: neuen Token abfragen. |
+| 404 | Modul „Heizungssteuerung" in GeORG nicht (mehr) gebucht → Reparaturhinweis. |
+| 422 mit `rooms.N.id` | Raum unbekannt oder Heizungssteuerung dort deaktiviert (z. B. Slug geändert). **Die gesamte Meldung wird abgelehnt.** Räume neu laden, betroffenen Raum aus der Meldung nehmen und Reparaturhinweis „Raum neu zuordnen" anlegen. |
+| HA-Neustart / Cache verloren / Zuordnung geändert | Einmal mit `force: true` melden, um die aktuelle Anforderung aller Räume erneut zu bekommen. |
 
-**In GeORG** ist zu sehen, wann sich HA zuletzt gemeldet hat. Das ergibt sich aus den Abrufen und Rückmeldungen. GeORG kann daraus selbst einen Hinweis erzeugen, etwa „Heizungssteuerung seit 24 h ohne Kontakt“.
+**In GeORG sichtbar:** „Zuletzt genutzt" am API-Zugang und „gemeldet vor …" je Raum in der Heizungsübersicht.
 
 ---
 
-## 6. Authentifizierung: OAuth2
+## 6. Authentifizierung: API-Zugang (Bearer-Token)
 
-- Die Integration nutzt den OAuth2-Flow von HA (`config_entry_oauth2_flow`) mit **Authorization Code + PKCE**.
-- Weil jede GeORG-Instanz eine eigene URL hat, baut die Integration die OAuth2-Implementierung dynamisch aus der eingegebenen Instanz-URL (`/oauth/authorize`, `/oauth/token`).
-- Die **Client-ID** ist fest und in jeder GeORG-Instanz als öffentlicher Client registriert. Deshalb braucht es kein Client-Secret und keine Application Credentials beim Verein.
-- Als Redirect wird `https://my.home-assistant.io/redirect/oauth` verwendet. Das funktioniert auch bei HA-Instanzen, die von außen nicht erreichbar sind.
-- **Scopes**, zum Beispiel `heating:read` (Räume, Heizfenster) und `heating:report` (Rückmeldung). Der Token darf nichts anderes in GeORG.
-- Welcher GeORG-Benutzer bzw. welche Rolle die Integration autorisieren darf, legt GeORG fest.
+**Kein OAuth2.** Die Integration nutzt einen API-Zugang von GeORG:
+
+1. In GeORG unter **Organisationseinstellungen → API-Zugänge** einen neuen Zugang anlegen, z. B. „Home Assistant", Recht **„Heizungssteuerung"** (`heating:control`).
+2. Der Token wird **nur einmal** angezeigt und im HA-Config-Flow eingegeben.
+3. Jede Anfrage: `Authorization: Bearer <token>` und `Accept: application/json`.
+
+- Der Mandant (GeORG-Organisation) ergibt sich aus dem Token.
+- Das Recht `heating:control` erlaubt nur die beiden Heizungs-Endpunkte.
+- **Pro HA-Installation ein eigener API-Zugang**, denn der Stand der gesendeten Anforderungen hängt am Zugang. Zwei Installationen mit demselben Token würden sich die Anforderungen gegenseitig „wegnehmen".
+- Wird der Token in GeORG neu erzeugt oder der Zugang deaktiviert, antwortet die API mit 401 bzw. 403.
+- Benutzer-Tokens funktionieren für `/heating/sync` nicht (403).
 
 ---
 
 ## 7. Einrichtung in Home Assistant
 
-1. **Instanz-URL** der GeORG-Instanz eingeben (z. B. `georg.lkg-spremberg.de`).
-2. **Anmeldung** per OAuth2 im Browser gegen diese Instanz.
+1. **Instanz-URL** der GeORG-Instanz eingeben (z. B. `https://georg.lkg-spremberg.de`).
+2. **Token** des API-Zugangs eingeben. Der Config-Flow prüft ihn mit `GET /api/v1/heating/rooms`.
 3. Die Integration lädt die **Räume** aus GeORG.
-4. **Raumzuordnung** im Options Flow: Jedem GeORG-Raum werden eine oder mehrere `climate`- bzw. `switch`-Entitäten zugeordnet. Die Zuordnung lässt sich jederzeit ändern.
+4. **Raumzuordnung** im Options Flow: Jedem GeORG-Raum werden zugeordnet
+   - eine oder mehrere `climate`- bzw. `switch`-Entitäten (Heizgeräte),
+   - optional ein Temperatur- und ein Feuchtesensor (`sensor` mit `device_class` `temperature` / `humidity`). Ohne Sensor wird bei `climate` das Attribut `current_temperature` verwendet.
+5. Nur zugeordnete Räume werden gemeldet. Nach jeder Änderung der Zuordnung einmal mit `force: true` melden.
 
-Die Zuordnung liegt **nur in HA**. GeORG kennt die Entitäten in HA nicht. Es bekommt über die Rückmeldung nur die Werte je Raum.
-
-`manifest.json` enthält `"single_config_entry": true`, weil es genau eine GeORG-Instanz pro HA gibt.
+Die Zuordnung liegt **nur in HA**; GeORG kennt die HA-Entitäten nicht. `manifest.json` enthält `"single_config_entry": true`.
 
 ---
 
 ## 8. Entitäten in Home Assistant
 
-Pro GeORG-Raum ein **Gerät** mit:
+Pro zugeordnetem GeORG-Raum ein **Gerät** mit:
 
-| Entität | Zweck |
+| Entität | Quelle |
 | --- | --- |
-| `calendar.<raum>_heizfenster` | Heizfenster des Raums (sichtbar im HA-Kalender) |
-| `sensor.<raum>_naechstes_heizfenster` | Beginn des nächsten Heizfensters |
-| `sensor.<raum>_solltemperatur` | aktueller Sollwert laut GeORG |
-| `binary_sensor.<raum>_heizphase` | Heizfenster aktiv ja/nein |
-| `binary_sensor.<raum>_uebersteuert` | manuell vom Sollwert abweichend |
-| `switch.<raum>_automatik` | GeORG-Steuerung für diesen Raum ein/aus |
+| `binary_sensor.<raum>_heizen` | letzter empfangener `command.state` |
+| `sensor.<raum>_solltemperatur` | letzter empfangener `command.target_temperature` |
+| `sensor.<raum>_heizfenster_beginn` / `_ende` | `window.starts_at` / `window.ends_at` (Zeitstempel) |
+| `sensor.<raum>_heizfenster_termin` | `window.name` |
+| `switch.<raum>_automatik` | GeORG-Steuerung für diesen Raum ein/aus (nur in HA). Aus = Anforderungen ignorieren; beim Wiedereinschalten mit `force: true` melden. |
 
-Zusätzlich gibt es ein Gerät „GeORG-Verbindung“ mit `binary_sensor` Verbindungsstatus und `sensor` letzter erfolgreicher Abruf.
-
-Die Heizgeräte selbst bleiben die vorhandenen Entitäten des Vereins. Die Integration steuert sie nur an.
+Zusätzlich ein Gerät „GeORG-Verbindung" mit `binary_sensor` Verbindungsstatus und `sensor` letzter erfolgreicher Abruf.
 
 ---
 
-## 9. GeORG-API (Skizze)
+## 9. GeORG-API
 
-Die Details kommen in eine eigene OpenAPI-Spezifikation (`api/openapi.yaml`). Grobe Struktur:
+**Basis-URL:** `https://<instanz>/api/v1` · JSON · Zeiten in ISO 8601 mit Offset (Europe/Berlin) · Temperaturen in °C, Feuchte in %.
 
-| Methode | Pfad | Scope | Inhalt |
+Die OpenAPI-Spezifikation erzeugt GeORG automatisch (Scramble, Tag „Heating", `php artisan scramble:export` → `api.json`).
+
+### 9.1 `GET /heating/rooms` – Räume auflisten
+
+Alle Räume mit aktiver Heizungssteuerung, sortiert wie in GeORG (Kategorie, Reihenfolge, Name). Für den Config-/Options-Flow.
+
+```http
+GET /api/v1/heating/rooms
+Authorization: Bearer 12|abc…
+Accept: application/json
+```
+
+```json
+{
+  "data": [
+    {
+      "id": "gemeindesaal",
+      "name": "Gemeindesaal",
+      "comfort_temperature": 21.5,
+      "eco_temperature": 16
+    }
+  ]
+}
+```
+
+| Feld | Typ | Beschreibung |
+| --- | --- | --- |
+| `id` | string | Stabile Kennung des Raums (in GeORG der Slug). Damit wird der Raum bei `/heating/sync` gemeldet. Ändert sich nur, wenn der Slug in GeORG bewusst geändert wird. |
+| `name` | string | Anzeigename. |
+| `comfort_temperature` | number \| null | Komforttemperatur. |
+| `eco_temperature` | number \| null | Absenktemperatur. |
+
+### 9.2 `POST /heating/sync` – Zustand melden, Schaltanforderungen abholen
+
+#### Anfrage
+
+```http
+POST /api/v1/heating/sync
+Authorization: Bearer 12|abc…
+Accept: application/json
+Content-Type: application/json
+```
+
+```json
+{
+  "force": false,
+  "rooms": [
+    { "id": "gemeindesaal", "current_temperature": 18.7, "humidity": 52 },
+    { "id": "kapelle" }
+  ]
+}
+```
+
+| Feld | Typ | Pflicht | Beschreibung |
 | --- | --- | --- | --- |
-| `GET` | `/api/heating/v1/rooms` | `heating:read` | Räume: ID, Name, Komfort- und Absenktemperatur |
-| `GET` | `/api/heating/v1/windows?from=…&to=…` | `heating:read` | Heizfenster: Raum-ID, Beginn, Ende, Solltemperatur, Änderungszeitpunkt |
-| `POST` | `/api/heating/v1/status` | `heating:report` | je Raum: Ist-Temperatur, gesetzter Sollwert, Zeitpunkt, übersteuert ja/nein |
+| `force` | boolean | nein | `true` = aktuelle Anforderung aller gemeldeten Räume erneut senden (Neustart, geänderte Zuordnung). Standard `false`. |
+| `rooms` | array | ja | 1–500 Einträge, jede `id` nur einmal. |
+| `rooms[].id` | string | ja | `id` aus `/heating/rooms`. |
+| `rooms[].current_temperature` | number \| null | nein | Ist-Temperatur (−50 … 100). Weglassen = alter Wert bleibt; `null` = Wert löschen (Sensor nicht verfügbar). |
+| `rooms[].humidity` | number \| null | nein | Relative Luftfeuchte (0 … 100), Semantik wie oben. |
 
-- Zeiten werden in ISO 8601 mit Zeitzone angegeben (Europe/Berlin).
-- Ein `ETag` bzw. `If-None-Match` auf `/windows` spart unnötige Übertragungen beim Polling.
-- Heizfenster enthalten keine Termintitel oder Personendaten. So gelangen nur die für die Heizung nötigen Daten in HA.
+Nur die gemeldeten Räume werden ausgewertet. Die Messwerte werden **vor** der Entscheidung übernommen (wichtig für dynamische Vorlaufzeit und Auto-Regelung).
+
+#### Antwort `200`
+
+```json
+{
+  "data": [
+    {
+      "id": "gemeindesaal",
+      "command": { "state": "on", "target_temperature": 21.5 },
+      "window": {
+        "name": "Gottesdienst",
+        "starts_at": "2026-11-10T09:00:00+01:00",
+        "ends_at": "2026-11-10T12:15:00+01:00"
+      }
+    },
+    {
+      "id": "kapelle",
+      "command": null,
+      "window": null
+    }
+  ]
+}
+```
+
+| Feld | Typ | Beschreibung |
+| --- | --- | --- |
+| `id` | string | Raum, Reihenfolge wie in der Anfrage. |
+| `command` | object \| null | Neue Schaltanforderung; `null` = seit der letzten Anforderung an diesen API-Zugang unverändert → **nichts tun**. |
+| `command.state` | `"on"` \| `"off"` | Für schaltbare Geräte; bei `climate` Heizmodus sicherstellen. |
+| `command.target_temperature` | number \| null | Komfort- (`on`) bzw. Absenktemperatur (`off`) für Thermostate. |
+| `window` | object \| null | **Informativ:** laufender oder nächster Heizzeitraum des Raums, bezogen auf einen einzelnen Termin (mit Vor-/Nachlaufzeit). `null`, wenn kein Termin ansteht oder die Steuerung global aus ist bzw. keine Heizperiode ist. |
+| `window.name` | string | Titel des auslösenden Termins. |
+| `window.starts_at` / `window.ends_at` | string | Beginn/Ende des Heizzeitraums. |
+
+`window` dient der Anzeige und der Absicherung bei Ausfällen (Abschnitt 5). **Geschaltet wird ausschließlich nach `command`.**
+
+### 9.3 Fehler
+
+Fehler kommen im Laravel-Format `{"message": "…", "errors": {…}}` (`errors` nur bei 422).
+
+| Status | Bedeutung |
+| --- | --- |
+| 401 | Kein oder ungültiger Token. |
+| 403 | Token ohne Recht `heating:control`, API-Zugang deaktiviert oder Benutzer-Token statt API-Zugang. |
+| 404 | Modul „Heizungssteuerung" für die Organisation nicht gebucht. |
+| 422 | Validierungsfehler, z. B. `rooms.0.id`: „Raum „kapelle" ist unbekannt oder nicht heizungsgesteuert." – dann wird **nichts** verarbeitet. |
+
+### 9.4 Beispiel mit curl
+
+```bash
+curl -s https://georg.example.org/api/v1/heating/sync \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"rooms":[{"id":"gemeindesaal","current_temperature":18.7,"humidity":52}]}'
+```
 
 ---
 
-## 10. Verteilung
+## 10. Ablauf in der Integration
+
+```text
+GeORG-Instanz                                   Home Assistant
+┌───────────────────────────┐                   ┌──────────────────────────────────┐
+│ Räume + Heizeinstellungen │  GET /rooms       │ Config-/Options-Flow             │
+│                           │ ◄──────────────── │  (Räume zuordnen)                │
+│ Entscheidung je Raum      │                   │                                  │
+│ Stand je API-Zugang       │  POST /sync       │ Coordinator (alle 1–5 min)       │
+│                           │ ◄──────────────── │  Messwerte sammeln → melden      │
+│                           │ ────────────────► │  command ≠ null → Geräte schalten│
+└───────────────────────────┘  command/window   │  letzte Anforderung speichern    │
+                                                └──────────────────────────────────┘
+```
+
+1. **Coordinator** (`DataUpdateCoordinator`, Intervall konfigurierbar, Vorschlag **60 s bis 5 min**) sammelt je zugeordnetem Raum Temperatur und Feuchte und ruft `POST /heating/sync` auf.
+2. Für jeden Raum mit `command` ≠ `null`: Geräte gemäß Abschnitt 4 schalten.
+3. Letzte Anforderung und letztes `window` je Raum **persistent speichern** (`homeassistant.helpers.storage.Store`) – für Entitäten, das Nachholen bei nicht verfügbaren Geräten und die Ausfall-Absicherung.
+4. Beim Start der Integration (und nach Änderung der Zuordnung) die erste Meldung mit `force: true` senden.
+5. Die Räume (`GET /heating/rooms`) werden beim Einrichten, im Options Flow und nach einem 422 neu geladen – nicht bei jedem Intervall.
+
+---
+
+## 11. Verteilung
 
 Die Integration liegt in HA unter `config/custom_components/georg/` und wird in einem **eigenen, öffentlichen GitHub-Repo** entwickelt.
 
-- **HACS Custom Repository** (Start): Der Verein trägt die Repo-URL in HACS ein. In GeORG erledigt ein „My Home Assistant“-Button das mit einem Klick:
+- **HACS Custom Repository** (Start): Der Verein trägt die Repo-URL in HACS ein. In GeORG kann ein „My Home Assistant"-Button das mit einem Klick erledigen:
   `https://my.home-assistant.io/redirect/hacs_repository/?owner=<org>&repository=<repo>&category=integration`
-- **HACS-Standardliste** (sobald stabil): Dafür braucht es einen PR beim HACS-Projekt, die Validierung durch hassfest und die HACS-Action, eine `hacs.json`, Releases und ein Logo.
+- **HACS-Standardliste** (sobald stabil): PR beim HACS-Projekt, Validierung durch hassfest und die HACS-Action, `hacs.json`, Releases und ein Logo.
 - **Manuelle Installation** als Fallback: ZIP entpacken nach `custom_components`, ohne automatische Updates.
 - **Core-Integration** ist ein optionales Ziel für später.
 
-Der Quelltext ist ohnehin bei jedem Verein einsehbar. Schützenswert sind die GeORG-API und die Zugangsdaten, nicht der Code der Integration.
-
 ---
 
-## 11. Aufbau des Repos
+## 12. Aufbau des Repos
 
 ```text
 georg-homeassistant/
 ├── api/
-│   └── openapi.yaml         # Spezifikation der GeORG-Heizungs-API
+│   └── openapi.yaml         # aus GeORG exportiert (Scramble), Heating-Teil
 ├── custom_components/georg/
-│   ├── __init__.py          # Setup, Coordinator, Scheduler starten
-│   ├── manifest.json        # domain, version, requirements, iot_class: cloud_polling
-│   ├── oauth.py             # dynamische OAuth2-Implementierung (PKCE, feste Client-ID)
-│   ├── config_flow.py       # Instanz-URL, OAuth2, Reauth, Raumzuordnung (Options)
-│   ├── coordinator.py       # pollt die GeORG-API, Cache
-│   ├── scheduler.py         # Schaltpunkte, Ansteuerung climate/switch
-│   ├── reporter.py          # Rückmeldung an GeORG
-│   ├── calendar.py / sensor.py / binary_sensor.py / switch.py
+│   ├── __init__.py          # Setup, Coordinator starten
+│   ├── manifest.json        # domain, version, requirements, iot_class: cloud_polling, single_config_entry
+│   ├── config_flow.py       # Instanz-URL + Token, Reauth, Raumzuordnung (Options)
+│   ├── coordinator.py       # meldet an /heating/sync, speichert letzte Anforderung (Store)
+│   ├── controller.py        # setzt Anforderungen an climate/switch um, Nachholen, Ausfall-Absicherung
+│   ├── sensor.py / binary_sensor.py / switch.py
 │   ├── strings.json + translations/de.json
 │   └── brand/               # Icon/Logo
 ├── tests/                   # pytest-homeassistant-custom-component
@@ -181,26 +361,26 @@ georg-homeassistant/
 └── .github/workflows/       # hassfest, HACS-Validierung, Tests
 ```
 
-Der **API-Client** wird von Anfang an als eigenes kleines Python-Paket (z. B. `pygeorg`) auf PyPI angelegt und in `manifest.json` unter `requirements` referenziert. Das erspart den Umbau, falls die Integration später in den Core soll.
+Der **API-Client** wird als eigenes kleines Python-Paket (z. B. `pygeorg`) auf PyPI angelegt und in `manifest.json` unter `requirements` referenziert. Er kapselt die beiden Endpunkte und die Fehlerfälle aus 9.3 (eigene Exceptions für Auth, Modul fehlt, unbekannter Raum).
 
 ---
 
-## 12. Vorgehen
+## 13. Vorgehen
 
-1. **OpenAPI-Spezifikation** der Heizungs-API entwerfen und mit GeORG abstimmen (inkl. OAuth2-Client und Scopes).
-2. **Mock-Server** aus der Spezifikation erzeugen, damit die Integration parallel zur API entwickelt werden kann.
-3. Öffentliches Repo unter einer GeORG-Organisation auf GitHub anlegen.
-4. Grundgerüst: `manifest.json`, Config Flow (Instanz-URL + OAuth2), Coordinator mit Cache.
-5. Scheduler und Ansteuerung von `climate` und `switch`, dazu die Entitäten.
-6. Rückmeldung, Reparaturhinweise, Reauth.
+1. `api.json` aus GeORG exportieren und den Heating-Teil als `api/openapi.yaml` ins Repo übernehmen; Mock-Server daraus erzeugen.
+2. `pygeorg`: Client für `rooms` und `sync` inkl. Fehlerbehandlung.
+3. Grundgerüst: `manifest.json`, Config Flow (URL + Token), Coordinator.
+4. Options Flow mit Raumzuordnung (Geräte + Sensoren).
+5. Ansteuerung von `climate` und `switch`, persistente letzte Anforderung, Entitäten.
+6. Reparaturhinweise, Reauth, Ausfall-Absicherung.
 7. Releases mit semantischer Versionierung, Verteilung als HACS Custom Repository.
 8. Sobald stabil: Aufnahme in die HACS-Standardliste beantragen.
 
 ---
 
-## 13. Offene Punkte
+## 14. Offene Punkte
 
-- Polling-Intervall und Horizont der abgerufenen Heizfenster (z. B. 15 min, 7 Tage)
-- Intervall der Rückmeldung an GeORG und ab welcher Abweichung „übersteuert“ gilt
+- Standard-Meldeintervall und Karenz der Ausfall-Absicherung
 - Schwelle für den Reparaturhinweis bei Ausfall
+- Lokale Erkennung „manuell übersteuert" (Soll am Gerät ≠ letzte Anforderung) – nur als HA-Anzeige; GeORG erhält diese Information derzeit nicht
 - GitHub-Organisation, Lizenz, Mindestversion von Home Assistant
