@@ -9,7 +9,7 @@
           "token": "API-Token"
         },
         "data_description": {
-          "url": "Adresse deiner GeORG-Instanz, z. B. https://georg.example.org",
+          "url": "Adresse deiner GeORG-Instanz, z. B. {example_url}",
           "token": "Der Token wird beim Anlegen des API-Zugangs nur einmal angezeigt."
         }
       },

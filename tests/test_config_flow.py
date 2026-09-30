@@ -31,6 +31,9 @@ async def test_user_flow(
         DOMAIN, context={"source": SOURCE_USER}
     )
     assert result["type"] is FlowResultType.FORM
+    assert result["description_placeholders"] == {
+        "example_url": "https://georg.example.org"
+    }
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],

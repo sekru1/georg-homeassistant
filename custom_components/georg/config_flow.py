@@ -45,6 +45,7 @@ from .const import (
 from .coordinator import GeorgConfigEntry
 
 CONF_ROOM = "room"
+EXAMPLE_URL = "https://georg.example.org"
 
 _TOKEN_SELECTOR = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
@@ -90,6 +91,7 @@ class GeorgConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
                 user_input,
             ),
+            description_placeholders={"example_url": EXAMPLE_URL},
             errors=errors,
         )
 
